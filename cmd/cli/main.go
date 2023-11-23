@@ -66,11 +66,14 @@ func main() {
 	stats := ESGetIndexStats(ESBenchIndexName)
 	fmt.Printf("Index stats:\n%s\n", ToPrettyJSON(stats))
 
-	start := time.Now()
-
-	QueryItems(queries, *fetchSource, 240)
-
-	fmt.Printf("Executed %d queries in %s\n", len(queries), time.Since(start))
+	var totalDuration time.Duration
+	runs := 3
+	for run := 0; run < runs; run++ {
+		runStart := time.Now()
+		QueryItems(queries, *fetchSource, 240)
+		totalDuration += time.Since(runStart)
+	}
+	fmt.Printf("Executed %d queries x %d runs. Average time %s\n", len(queries), runs, totalDuration/time.Duration(runs))
 }
 
 type SearchQuery struct {
@@ -190,7 +193,7 @@ func QueryItems(queries []*SearchQuery, fetchSource bool, fetchMax int) {
 				"_source": fetchSource,
 				"from":    from,
 			}
-			res, code, err := Call(http.MethodPost, ESHost+"/"+ESBenchIndexName+"/_search", ToJSON(esQuery))
+			res, code, err := Call(http.MethodPost, ESHost+"/"+ESBenchIndexName+"/_search?request_cache=false", ToJSON(esQuery))
 			if err != nil {
 				log.Panic(err)
 			}
