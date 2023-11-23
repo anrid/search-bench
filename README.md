@@ -15,6 +15,11 @@
 ## ES 7.x vs 8.x
 
 - All calls to Elasticsearch is done using raw REST API calls
+- Benchmark run on a modern desktop PC running Windows 11
+  - Spec:
+    - Processor 12th Gen Intel(R) Core(TM) i7-12700KF 3.61 GHz
+    - Installed RAM 32.0 GB (31.8 GB usable)
+- Elasticsearch is run in `single-node mode` via Docker for Windows
 
 ```bash
 # Elasticsearch 7.17.15
