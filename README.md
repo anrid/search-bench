@@ -62,7 +62,7 @@ Executed 1000 queries x 3 runs. Average time 11.37215205s
 
 - Indexed 500,000 docs in `2m 40s`
 - Total index size `617,327,009 bytes`
-- Executed 1,000 popular queries in `11.37s`
+- Executed 1,000 popular queries in 3 runs at an average time of `11.37s`
 
 ```bash
 # Elasticsearch 8.11.1
@@ -105,4 +105,7 @@ Executed 1000 queries x 3 runs. Average time 8.370502153s
 
 - Indexed 500,000 docs in `2m 46s`
 - Total index size `615,131,259 bytes`
-- Executed 1,000 popular queries in `8.37s` (`~24%` faster than ES version `7.17.15`)
+- Executed 1,000 popular queries in 3 runs at an average time of  `8.37s`
+
+> [!NOTE]
+> This is `~24%` faster than ES version `7.17.15`
