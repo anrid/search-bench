@@ -32,6 +32,8 @@ type RunIndexerArgs struct {
 }
 
 func RunIndexer(a RunIndexerArgs) {
+	fmt.Printf("Running indexer: max %d items ..\n", a.Max)
+
 	CreateItemIndex()
 
 	start := time.Now()

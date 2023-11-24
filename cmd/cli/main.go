@@ -23,7 +23,7 @@ func main() {
 	dataDir := pflag.StringP("data-dir", "d", "", "data dir containing Item files in CSV format (gzipped) [REQUIRED]")
 	filenameFilter := pflag.StringP("filename-filter", "f", ".csv.gz", "filename pattern to filter on in data dir")
 	batchSize := pflag.Int("batch-size", 5000, "batch size, i.e. number of items to insert into ES at a time")
-	max := pflag.Int("max", 0, "process max X items before exiting")
+	max := pflag.Int("max", 1_000_000, "process max X items before exiting")
 	startFrom := pflag.Int("start-from", 0, "start processing items from the Xth item found in data dir")
 	benchmarkRuns := pflag.Int("runs", 3, "number of query benchmark runs to execute and average")
 	runIndexer := pflag.Bool("run-indexer", false, "recreates bench index, reads items and indexes them in bulk")

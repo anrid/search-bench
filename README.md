@@ -21,91 +21,244 @@
     - Installed RAM 32.0 GB (31.8 GB usable)
 - Elasticsearch is run in `single-node mode` via Docker for Windows
 
+### Elasticsearch 7.17.15
+
 ```bash
 # Elasticsearch 7.17.15
 $ docker start es7
 
-# Run benchmark
-$ go run cmd/cli/main.go --data-dir ../data --batch-size 5000 --queries-file ../queries.json --run-indexer --max 500_000
+# Index 1,000,000 items
+$ go run cmd/cli/main.go --run-indexer --data-dir ../data --batch-size 5_000 --max 1_000_000
 
-Loading queries from ../queries.json ..
-Loaded and prepared 1000 queries
 Connected to ES, created test index and executed a few queries - sanity test passed!
-Reading Items file: items-0001.csv.gz
-Processed 50000 items ..
+Running indexer: max 1000000 items ..
+Importing items from file: items-1week-0001.csv.gz
+Preview item: id1 Zippo Lighter(未使用) on_sale 2023-11-21 23:02:53 UTC
+Bulk indexing 5000 items (JSON payload: 7783448 bytes)
+Bulk indexing 5000 items (JSON payload: 7590630 bytes)
+Processed 10000 items ..
+
 ...
-Reading Items file: items-0003.csv.gz
-Processed 450000 items ..
-Processed 500000 items ..
-Read 500000 items
-Finished indexing 500000 items in 2m39.436819284s
-Index stats:
+
+Bulk indexing 1016 items (JSON payload: 1272289 bytes)
+Imported 1000000 items total
+Index stats (after):
 {
   "_all": {
     "primaries": {
       "docs": {
-        "count": 500000
+        "count": 1000000
       },
       "store": {
-        "size_in_bytes": 617327009,
-        "total_data_set_size_in_bytes": 617327009
+        "size_in_bytes": 1195189251,
+        "total_data_set_size_in_bytes": 1195189251
+      },
+  }
+}
+Finished indexing 1000000 items in 4m48.981955219s
+
+# Run query benchmark
+$ go run cmd/cli/main.go -q ../top-1000-queries.json --runs 5
+
+Connected to ES, created test index and executed a few queries - sanity test passed!
+Loading queries from ../top-1000-queries.json ..
+Loaded and prepared 1000 queries
+Index stats (before):
+{
+  "_all": {
+    "primaries": {
+      "docs": {
+        "count": 1000000
+      },
+      "store": {
+        "size_in_bytes": 1195189251,
+        "total_data_set_size_in_bytes": 1195189251
+      },
+      "query_cache": {
+        "cache_count": 0,
+        "cache_size": 0,
+        "evictions": 0,
+        "hit_count": 0,
+        "memory_size_in_bytes": 0,
+        "miss_count": 0,
+        "total_count": 0
+      },
+      "request_cache": {
+        "evictions": 0,
+        "hit_count": 0,
+        "memory_size_in_bytes": 0,
+        "miss_count": 0
       }
     }
   }
 }
 
-Executed 1000 queries x 3 runs. Average time 11.37215205s
+Executed 100 queries - fetched 120 / 2078 (eq) item IDs
+Executed 100 queries - fetched 240 / 2078 (eq) item IDs
+Executed 200 queries - fetched 120 / 1289 (eq) item IDs
+Executed 200 queries - fetched 240 / 1289 (eq) item IDs
+
+...
+
+Executed 1000 queries x 5 runs. Average time 13.442433577s
+Index stats (after):
+{
+  "_all": {
+    "primaries": {
+      "docs": {
+        "count": 1000000
+      },
+      "store": {
+        "size_in_bytes": 1195189251,
+        "total_data_set_size_in_bytes": 1195189251
+      },
+      "query_cache": {
+        "cache_count": 0,
+        "cache_size": 0,
+        "evictions": 0,
+        "hit_count": 0,
+        "memory_size_in_bytes": 0,
+        "miss_count": 0,
+        "total_count": 0
+      },
+      "request_cache": {
+        "evictions": 0,
+        "hit_count": 0,
+        "memory_size_in_bytes": 0,
+        "miss_count": 0
+      }
+    }
+  }
+}
 
 ```
 
-### Elasticsearch 7.17.15 Results
+#### Elasticsearch 7.17.15 Results
 
-- Indexed 500,000 docs in `2m 40s`
-- Total index size `617,327,009 bytes`
-- Executed 1,000 popular queries in 3 runs at an average time of `11.37s`
+- Indexed 1,000,000 docs in `4m 49s`
+- Total index size `1,195,189,251 bytes`
+- Executed 1,000 popular queries in `5 runs` at an average time of `13.44s`
+  - Both query and request caches disabled
+
+### Elasticsearch 8.11.1
 
 ```bash
 # Elasticsearch 8.11.1
 $ docker start es8
 
-# Run benchmark
-$ go run cmd/cli/main.go --data-dir ../data --batch-size 5000 --queries-file ../queries.json --run-indexer --max 500_000
+# Index 1,000,000 items
+$ go run cmd/cli/main.go --run-indexer --data-dir ../data --batch-size 5_000 --max 1_000_000
 
-Loading queries from ../queries.json ..
-Loaded and prepared 1000 queries
 Connected to ES, created test index and executed a few queries - sanity test passed!
-Reading Items file: items-0001.csv.gz
-Processed 50000 items ..
+Running indexer: max 1000000 items ..
+Importing items from file: items-1week-0001.csv.gz
+Preview item: id1 Zippo Lighter(未使用) on_sale 2023-11-21 23:02:53 UTC
+Bulk indexing 5000 items (JSON payload: 7783448 bytes)
+Bulk indexing 5000 items (JSON payload: 7590630 bytes)
+Processed 10000 items ..
+
 ...
-Reading Items file: items-0003.csv.gz
-Processed 450000 items ..
-Processed 500000 items ..
-Read 500000 items
-Finished indexing 500000 items in 2m46.600602911s
-Index stats:
+
+Bulk indexing 1016 items (JSON payload: 1272289 bytes)
+Imported 1000000 items total
+Index stats (after):
 {
   "_all": {
     "primaries": {
       "docs": {
-        "count": 500000
+        "count": 1000000
       },
       "store": {
-        "size_in_bytes": 615131259,
-        "total_data_set_size_in_bytes": 615131259
+        "size_in_bytes": 1190922960,
+        "total_data_set_size_in_bytes": 1190922960
+      },
+  }
+}
+Finished indexing 1000000 items in 4m30.898442043s
+
+# Run query benchmark
+$ go run cmd/cli/main.go -q ../top-1000-queries.json --runs 5
+
+Connected to ES, created test index and executed a few queries - sanity test passed!
+Loading queries from ../top-1000-queries.json ..
+Loaded and prepared 1000 queries
+Index stats (before):
+{
+  "_all": {
+    "primaries": {
+      "docs": {
+        "count": 1000000
+      },
+      "store": {
+        "size_in_bytes": 1190922960,
+        "total_data_set_size_in_bytes": 1190922960
+      },
+      "query_cache": {
+        "cache_count": 0,
+        "cache_size": 0,
+        "evictions": 0,
+        "hit_count": 0,
+        "memory_size_in_bytes": 0,
+        "miss_count": 0,
+        "total_count": 0
+      },
+      "request_cache": {
+        "evictions": 0,
+        "hit_count": 0,
+        "memory_size_in_bytes": 0,
+        "miss_count": 0
       }
     }
   }
 }
 
-Executed 1000 queries x 3 runs. Average time 8.370502153s
+Executed 100 queries - fetched 120 / 2078 (eq) item IDs
+Executed 100 queries - fetched 240 / 2078 (eq) item IDs
+Executed 200 queries - fetched 120 / 1289 (eq) item IDs
+Executed 200 queries - fetched 240 / 1289 (eq) item IDs
+
+...
+
+Executed 1000 queries x 5 runs. Average time 9.116981003s
+Index stats (after):
+{
+  "_all": {
+    "primaries": {
+      "docs": {
+        "count": 1000000
+      },
+      "store": {
+        "size_in_bytes": 1190922960,
+        "total_data_set_size_in_bytes": 1190922960
+      },
+      "query_cache": {
+        "cache_count": 0,
+        "cache_size": 0,
+        "evictions": 0,
+        "hit_count": 0,
+        "memory_size_in_bytes": 0,
+        "miss_count": 0,
+        "total_count": 0
+      },
+      "request_cache": {
+        "evictions": 0,
+        "hit_count": 0,
+        "memory_size_in_bytes": 0,
+        "miss_count": 0
+      }
+    }
+  }
+}
 
 ```
 
 ### Elasticsearch 8.11.1 Results
 
-- Indexed 500,000 docs in `2m 46s`
-- Total index size `615,131,259 bytes`
-- Executed 1,000 popular queries in 3 runs at an average time of  `8.37s`
+- Indexed 1,000,000 docs in `4m 31s`
+- Total index size `1,190,922,960 bytes`
+- Executed 1,000 popular queries in `5 runs` at an average time of `9.12s`
+  - Both query and request caches disabled
 
 > [!NOTE]
-> This is `~24%` faster than ES version `7.17.15`
+>
+> - Query execution is `~32%` faster than ES version `7.17.15`
