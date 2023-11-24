@@ -45,14 +45,16 @@ func RunIndexer(a RunIndexerArgs) {
 	})
 
 	Refresh(ItemIndexName)
+
 	stats := IndexStats(ItemIndexName)
+	fmt.Printf("Index stats (after):\n%s\n", data.ToPrettyJSON(stats))
 
 	fmt.Printf("Finished indexing %d items in %s\n", stats.All.Primaries.Docs.Count, time.Since(start))
 }
 
 func RunBenchmark(runs int, queries []*query.SearchQuery, fetchSource bool) {
-	stats := IndexStats(ItemIndexName)
-	fmt.Printf("Index stats:\n%s\n", data.ToPrettyJSON(stats))
+	statsBefore := IndexStats(ItemIndexName)
+	fmt.Printf("Index stats (before):\n%s\n", data.ToPrettyJSON(statsBefore))
 
 	var totalDuration time.Duration
 
@@ -63,6 +65,9 @@ func RunBenchmark(runs int, queries []*query.SearchQuery, fetchSource bool) {
 	}
 
 	fmt.Printf("Executed %d queries x %d runs. Average time %s\n", len(queries), runs, totalDuration/time.Duration(runs))
+
+	statsAfter := IndexStats(ItemIndexName)
+	fmt.Printf("Index stats (after):\n%s\n", data.ToPrettyJSON(statsAfter))
 }
 
 func ExecuteQueries(queries []*query.SearchQuery, fetchSource bool, fetchMax int) {
@@ -173,7 +178,7 @@ type SearchResult struct {
 	} `json:"hits"`
 }
 
-func BulkIndexItems(items []*item.Item) error {
+func BulkIndexItems(itemsTotal int, items []*item.Item) error {
 	tok := data.KagomeV2Tokenizer()
 
 	for _, i := range items {
@@ -191,8 +196,11 @@ func BulkIndexItems(items []*item.Item) error {
 	}
 
 	bulk := BuildBulkBody(docs...)
-	// fmt.Printf("bulk dump:\n%s\n\n", bulk)
+	if len(bulk) > 10_000_000 {
+		fmt.Printf("WARNING: bulk index body is %d bytes large!\n", len(bulk))
+	}
 
+	fmt.Printf("Bulk indexing %d items (JSON payload: %d bytes)\n", len(items), len(bulk))
 	res, code, err := Call(http.MethodPost, Host+"/_bulk", bulk)
 	EnsureNoError(res, code, err)
 
@@ -230,6 +238,11 @@ func CreateItemIndex() {
 				"status":      Map{"type": "integer"},
 				"created":     Map{"type": "date", "format": "epoch_millis"},
 				"category_id": Map{"type": "integer"},
+			},
+		},
+		"settings": Map{
+			"index": Map{
+				"queries.cache.enabled": "false",
 			},
 		},
 	}))
@@ -324,6 +337,21 @@ type ESIndexStats struct {
 				SizeInBytes             int64 `json:"size_in_bytes"`
 				TotalDataSetSizeInBytes int64 `json:"total_data_set_size_in_bytes"`
 			} `json:"store"`
+			QueryCache struct {
+				CacheCount     int64 `json:"cache_count"`
+				CacheSize      int64 `json:"cache_size"`
+				Evictions      int64 `json:"evictions"`
+				HitCount       int64 `json:"hit_count"`
+				MemSizeInBytes int64 `json:"memory_size_in_bytes"`
+				MissCount      int64 `json:"miss_count"`
+				TotalCount     int64 `json:"total_count"`
+			} `json:"query_cache"`
+			RequestCache struct {
+				Evictions      int64 `json:"evictions"`
+				HitCount       int64 `json:"hit_count"`
+				MemSizeInBytes int64 `json:"memory_size_in_bytes"`
+				MissCount      int64 `json:"miss_count"`
+			} `json:"request_cache"`
 		} `json:"primaries"`
 	} `json:"_all"`
 }
@@ -332,6 +360,15 @@ func IndexStats(index string) *ESIndexStats {
 	res, _, err := Call(http.MethodGet, Host+"/"+index+"/_stats", nil)
 	if err != nil {
 		log.Panic(err)
+	}
+
+	if DebugPrint {
+		all := make(map[string]interface{})
+		err = sonic.Unmarshal(res, &all)
+		if err != nil {
+			log.Panic(err)
+		}
+		fmt.Printf("All Stats:\n%s\n\n", data.ToPrettyJSON(all))
 	}
 
 	stats := new(ESIndexStats)

@@ -2,13 +2,17 @@ package item
 
 import (
 	"compress/gzip"
+	"crypto/rand"
 	"encoding/csv"
 	"fmt"
 	"io"
 	"log"
+	"math/big"
+	mrand "math/rand"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/anrid/search-bench/pkg/data"
 )
@@ -32,12 +36,109 @@ type Item struct {
 	CategoryID int    `json:"category_id"`
 }
 
+type CreateChangeLogArgs struct {
+	ChangeLogFile  string
+	DataDir        string
+	FilenameFilter string
+	BatchSize      int
+	StartFrom      int
+	MaxItems       int
+	ForEachBatch   func(items []*Item) error
+}
+
+type ChangeLogEntry struct {
+	ItemID string
+	Update struct {
+		Name    string `json:"name,omitempty"`
+		Created int64  `json:"created,omitempty"`
+		Status  Status `json:"status,omitempty"`
+	} `json:"update,omitempty"`
+	Insert *Item `json:"insert,omitempty"`
+}
+
+func CreateChangeLog(a CreateChangeLogArgs) (changeLog []*ChangeLogEntry) {
+	changeLog = make([]*ChangeLogEntry, 0)
+
+	Import(ImportArgs{
+		DataDir:          a.DataDir,
+		FilenameFilter:   a.FilenameFilter,
+		BatchSize:        a.BatchSize,
+		MaxItemsToImport: a.MaxItems,
+		ForEachBatch: func(totalItems int, items []*Item) error {
+			itemNumber := totalItems - len(items)
+
+			// Use ~33% of items with item numbers <= a.StartFrom for
+			// update events, e.g. to simulate updates on `created` and
+			// `status` fields
+			maxItemNumberForUpdate := int(float64(len(items)) * 0.33)
+
+			for _, i := range items {
+				itemNumber++
+
+				if itemNumber <= a.StartFrom {
+					// Create update event
+					if itemNumber > maxItemNumberForUpdate {
+						// Skip 67% of all items
+						continue
+					}
+
+					// Create random update
+					rnd, err := rand.Int(rand.Reader, big.NewInt(10))
+					if err != nil {
+						log.Panic(err)
+					}
+
+					cl := &ChangeLogEntry{
+						ItemID: i.ID,
+					}
+
+					switch r := rnd.Int64(); {
+					case r >= 0 && r < 3:
+						// 30% chance of update on `created` field
+						cl.Update.Created = time.UnixMilli(i.Created).Add(24 * time.Hour).UnixMilli()
+					case r >= 3:
+						// 70% chance of update on `status` field
+						if i.Status == StatusOnSale || i.Status == StatusTrading {
+							cl.Update.Status = StatusSold
+						}
+					}
+
+					changeLog = append(changeLog, cl)
+				} else {
+					// Create insert event
+					changeLog = append(changeLog, &ChangeLogEntry{
+						ItemID: i.ID,
+						Insert: i,
+					})
+				}
+			}
+
+			return nil
+		},
+	})
+
+	// Shuffle change log!
+	mrand.Shuffle(len(changeLog), func(i, j int) {
+		changeLog[i], changeLog[j] = changeLog[j], changeLog[i]
+	})
+
+	b := data.ToJSON(changeLog)
+	err := os.WriteFile(a.ChangeLogFile, b, 0777)
+	if err != nil {
+		log.Panic(err)
+	}
+
+	fmt.Printf("Wrote %d bytes to change log file: %s\n", len(b), a.ChangeLogFile)
+
+	return
+}
+
 type ImportArgs struct {
 	DataDir          string
 	FilenameFilter   string
 	BatchSize        int
 	MaxItemsToImport int
-	ForEachBatch     func(items []*Item) error
+	ForEachBatch     func(totalItems int, items []*Item) error
 }
 
 func Import(a ImportArgs) {
@@ -116,11 +217,14 @@ func Import(a ImportArgs) {
 
 			items = append(items, i)
 			if len(items) >= a.BatchSize {
-				a.ForEachBatch(items)
+				err = a.ForEachBatch(totalItems, items)
+				if err != nil {
+					break
+				}
 				items = nil
 			}
 
-			if totalItems%50_000 == 0 {
+			if totalItems%10_000 == 0 {
 				fmt.Printf("Processed %d items ..\n", totalItems)
 			}
 
@@ -131,7 +235,7 @@ func Import(a ImportArgs) {
 		}
 
 		if len(items) > 0 {
-			a.ForEachBatch(items)
+			a.ForEachBatch(totalItems, items)
 			items = nil
 		}
 
