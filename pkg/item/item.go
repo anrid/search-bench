@@ -58,27 +58,27 @@ type ChangeLogEntry struct {
 
 func CreateChangeLog(a CreateChangeLogArgs) (changeLog []*ChangeLogEntry) {
 	changeLog = make([]*ChangeLogEntry, 0)
+	var updates, inserts int
+	itemsToImport := a.StartFrom + a.MaxItems
+	maxUpdates := a.MaxItems / 3
+	maxInserts := (a.MaxItems / 3) * 2
+
+	fmt.Printf("Creating a new change log with max %d updates and %d inserts\n", maxUpdates, maxInserts)
 
 	Import(ImportArgs{
 		DataDir:          a.DataDir,
 		FilenameFilter:   a.FilenameFilter,
 		BatchSize:        a.BatchSize,
-		MaxItemsToImport: a.MaxItems,
+		MaxItemsToImport: itemsToImport,
 		ForEachBatch: func(totalItems int, items []*Item) error {
 			itemNumber := totalItems - len(items)
-
-			// Use ~33% of items with item numbers <= a.StartFrom for
-			// update events, e.g. to simulate updates on `created` and
-			// `status` fields
-			maxItemNumberForUpdate := int(float64(len(items)) * 0.33)
 
 			for _, i := range items {
 				itemNumber++
 
 				if itemNumber <= a.StartFrom {
 					// Create update event
-					if itemNumber > maxItemNumberForUpdate {
-						// Skip 67% of all items
+					if updates >= maxUpdates {
 						continue
 					}
 
@@ -104,12 +104,18 @@ func CreateChangeLog(a CreateChangeLogArgs) (changeLog []*ChangeLogEntry) {
 					}
 
 					changeLog = append(changeLog, cl)
+					updates++
 				} else {
 					// Create insert event
+					if inserts >= maxInserts {
+						return fmt.Errorf("done after creating a change log with %d updates and %d inserts", updates, inserts)
+					}
+
 					changeLog = append(changeLog, &ChangeLogEntry{
 						ItemID: i.ID,
 						Insert: i,
 					})
+					inserts++
 				}
 			}
 
@@ -128,7 +134,10 @@ func CreateChangeLog(a CreateChangeLogArgs) (changeLog []*ChangeLogEntry) {
 		log.Panic(err)
 	}
 
-	fmt.Printf("Wrote %d bytes to change log file: %s\n", len(b), a.ChangeLogFile)
+	fmt.Printf(
+		"Wrote change log with %d updates and %d inserts to file: %s (%d bytes)\n",
+		updates, inserts, a.ChangeLogFile, len(b),
+	)
 
 	return
 }
