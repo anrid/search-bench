@@ -114,6 +114,12 @@ func ExecuteQueries(queries []*query.SearchQuery, fetchSource bool, fetchMax int
 				"_source": fetchSource,
 				"from":    from,
 			}
+			if true {
+				fmt.Printf("Query:\n\n%s\n\n", data.ToPrettyJSON(esQuery))
+				if qc > 100 {
+					return
+				}
+			}
 			res, code, err := Call(http.MethodPost, Host+"/"+ItemIndexName+"/_search?request_cache=false", data.ToJSON(esQuery))
 			if err != nil {
 				log.Panic(err)

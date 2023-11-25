@@ -1,6 +1,6 @@
 # Search Bench
 
-### Data used:
+## Data used in all benchmarks
 
 - CSV files containing items from a popular second-hand marketplace
   - Format:
@@ -20,6 +20,7 @@
     - Processor 12th Gen Intel(R) Core(TM) i7-12700KF 3.61 GHz
     - Installed RAM 32.0 GB (31.8 GB usable)
 - Elasticsearch is run in `single-node mode` via Docker for Windows
+- See [examples of queries used](#examples-of-elastichsearch-queries-used)
 
 ### Elasticsearch 7.17.15
 
@@ -262,3 +263,93 @@ Index stats (after):
 > [!NOTE]
 >
 > - Query execution is `~32%` faster than ES version `7.17.15`
+
+### Examples of Elasticsearch queries used
+
+```json
+// category_id only
+{
+  "_source": false,
+  "from": 0,
+  "query": {
+    "bool": {
+      "filter": [
+        {
+          "terms": {
+            "category_id": [
+              72
+            ]
+          }
+        }
+      ]
+    }
+  },
+  "size": 120
+}
+
+// keyword only
+{
+  "_source": false,
+  "from": 0,
+  "query": {
+    "bool": {
+      "minimum_should_match": 1,
+      "should": [
+        {
+          "match": {
+            "name": {
+              "query": "黒子 の バスケ"
+            }
+          }
+        },
+        {
+          "match": {
+            "desc": {
+              "query": "黒子 の バスケ"
+            }
+          }
+        }
+      ]
+    }
+  },
+  "size": 120
+}
+
+// Both keyword and category_id
+{
+  "_source": false,
+  "from": 0,
+  "query": {
+    "bool": {
+      "filter": [
+        {
+          "terms": {
+            "category_id": [
+              1
+            ]
+          }
+        }
+      ],
+      "minimum_should_match": 1,
+      "should": [
+        {
+          "match": {
+            "name": {
+              "query": "冬"
+            }
+          }
+        },
+        {
+          "match": {
+            "desc": {
+              "query": "冬"
+            }
+          }
+        }
+      ]
+    }
+  },
+  "size": 120
+}
+
+```
