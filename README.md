@@ -33,7 +33,7 @@
     - Processor 12th Gen Intel(R) Core(TM) i7-12700KF 3.61 GHz
     - Installed RAM 32.0 GB (31.8 GB usable)
 - Elasticsearch is run in `single-node mode` via Docker for Windows
-- See [examples of queries used](#examples-of-elastichsearch-queries-used)
+- See [examples of queries used](#examples-of-elasticsearch-queries-used)
 
 ### Elasticsearch 7.17.15
 
