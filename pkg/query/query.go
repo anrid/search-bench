@@ -68,12 +68,14 @@ func Load(queriesFile string) (qs []*SearchQuery) {
 			statuses := strings.SplitN(trimmed, ",", -1)
 			for _, status := range statuses {
 				switch status {
-				case "ITEM_STATUS_ON_SALE":
+				case `"ITEM_STATUS_ON_SALE"`:
 					q.Statuses = append(q.Statuses, item.StatusOnSale)
-				case "ITEM_STATUS_TRADING":
+				case `"ITEM_STATUS_TRADING"`:
 					q.Statuses = append(q.Statuses, item.StatusTrading)
-				case "ITEM_STATUS_SOLD_OUT":
+				case `"ITEM_STATUS_SOLD_OUT"`:
 					q.Statuses = append(q.Statuses, item.StatusSold)
+				default:
+					fmt.Printf("WARNING: unhandled status %s\n", status)
 				}
 			}
 		}

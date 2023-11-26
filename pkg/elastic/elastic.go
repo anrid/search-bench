@@ -6,6 +6,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -54,44 +55,69 @@ func RunIndexer(a RunIndexerArgs) {
 	fmt.Printf("Finished indexing %d items in %s\n", stats.All.Primaries.Docs.Count, time.Since(start))
 }
 
-func RunBenchmark(runs int, queries []*query.SearchQuery, fetchSource bool) {
+type RunBenchmarkArgs struct {
+	NumberOfRuns int // Number of times to execute the given queries, then calculate the average run time
+	Queries      []*query.SearchQuery
+	FetchSource  bool // Fetch full item source and print a preview
+
+	ResultsFile string // Write all query results to a file, maintaining the sort order (e.g. Bestmatch)
+	// If `FetchSource` = true  : Store complete items in results file
+	//                  = false : Store only item IDs in results file
+}
+
+func RunBenchmark(a RunBenchmarkArgs) {
+	fmt.Printf("Running benchmark: %d queries x %d runs ..\n", len(a.Queries), a.NumberOfRuns)
+
 	statsBefore := IndexStats(ItemIndexName)
 	fmt.Printf("Index stats (before):\n%s\n", data.ToPrettyJSON(statsBefore))
 
-	var totalDuration time.Duration
-
-	for run := 0; run < runs; run++ {
-		runStart := time.Now()
-		ExecuteQueries(queries, fetchSource, 240)
-		totalDuration += time.Since(runStart)
+	var resultsFile *os.File
+	var err error
+	if a.ResultsFile != "" {
+		resultsFile, err = os.OpenFile(a.ResultsFile, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0777)
+		if err != nil {
+			log.Panic(err)
+		}
 	}
 
-	fmt.Printf("Executed %d queries x %d runs. Average time %s\n", len(queries), runs, totalDuration/time.Duration(runs))
+	var totalDuration time.Duration
+
+	for run := 0; run < a.NumberOfRuns; run++ {
+		runStart := time.Now()
+		ExecuteQueries(a.Queries, a.FetchSource, 240, resultsFile)
+		totalDuration += time.Since(runStart)
+
+		// Store results from first run only!
+		if run == 0 && resultsFile != nil {
+			resultsFile.Close()
+			resultsFile = nil
+		}
+	}
+
+	fmt.Printf(
+		"Executed %d queries x %d runs. Average time %s\n",
+		len(a.Queries), a.NumberOfRuns, totalDuration/time.Duration(a.NumberOfRuns),
+	)
 
 	statsAfter := IndexStats(ItemIndexName)
 	fmt.Printf("Index stats (after):\n%s\n", data.ToPrettyJSON(statsAfter))
 }
 
-func ExecuteQueries(queries []*query.SearchQuery, fetchSource bool, fetchMax int) {
+func ExecuteQueries(queries []*query.SearchQuery, fetchSource bool, fetchMax int, resultsFile *os.File) {
 	size := 120
 	var qc int
+
+	createdSort := Map{"created": "desc"}
+	scoreSort := Map{"_score": "desc"}
 
 	for _, q := range queries {
 		qc++
 
 		var from int64
 		var totalDocsFetched int
+		var sort *Map
 
 		boolQuery := Map{}
-
-		if q.Keyword != "" {
-			boolQuery["should"] = []Map{
-				{"match": Map{"name": Map{"query": q.Keyword}}},
-				{"match": Map{"desc": Map{"query": q.Keyword}}},
-			}
-			boolQuery["minimum_should_match"] = 1
-		}
-
 		filterTerms := []Map{}
 
 		if len(q.CategoryIDs) > 0 {
@@ -102,6 +128,16 @@ func ExecuteQueries(queries []*query.SearchQuery, fetchSource bool, fetchMax int
 		}
 		if len(filterTerms) > 0 {
 			boolQuery["filter"] = filterTerms
+			sort = &createdSort
+		}
+
+		if q.Keyword != "" {
+			boolQuery["should"] = []Map{
+				{"match": Map{"name": Map{"query": q.Keyword}}},
+				{"match": Map{"desc": Map{"query": q.Keyword}}},
+			}
+			boolQuery["minimum_should_match"] = 1
+			sort = &scoreSort
 		}
 
 		for {
@@ -109,17 +145,18 @@ func ExecuteQueries(queries []*query.SearchQuery, fetchSource bool, fetchMax int
 				"query": Map{
 					"bool": boolQuery,
 				},
-				// "sort":    Map{"created": "desc"},
 				"size":    size,
 				"_source": fetchSource,
 				"from":    from,
 			}
-			if true {
-				fmt.Printf("Query:\n\n%s\n\n", data.ToPrettyJSON(esQuery))
-				if qc > 100 {
-					return
-				}
+			if sort != nil {
+				esQuery["sort"] = *sort
 			}
+
+			if DebugPrint {
+				fmt.Printf("Query:\n%s\n", data.ToPrettyJSON(esQuery))
+			}
+
 			res, code, err := Call(http.MethodPost, Host+"/"+ItemIndexName+"/_search?request_cache=false", data.ToJSON(esQuery))
 			if err != nil {
 				log.Panic(err)
@@ -155,6 +192,20 @@ func ExecuteQueries(queries []*query.SearchQuery, fetchSource bool, fetchMax int
 					)
 					if i+1 >= 10 {
 						break
+					}
+				}
+				// TODO: Store hits in results file, if one is open
+			}
+			if !fetchSource && len(se.Hits.Hits) > 0 && from == 0 /* only first page! */ {
+				// Write first page of results to results file, if one is open
+				if resultsFile != nil {
+					var ids []string
+					for _, doc := range se.Hits.Hits {
+						ids = append(ids, doc.ID)
+					}
+					_, err = resultsFile.WriteString(fmt.Sprintf("%d|%s\n", qc, strings.Join(ids, ",")))
+					if err != nil {
+						log.Panic(err)
 					}
 				}
 			}
@@ -249,8 +300,16 @@ func CreateItemIndex() {
 			},
 		},
 		"settings": Map{
+			"number_of_shards": 1,
 			"index": Map{
 				"queries.cache.enabled": "false",
+				"similarity": Map{
+					"default": Map{
+						"type": "BM25",
+						"b":    0.75,
+						"k1":   1.2,
+					},
+				},
 			},
 		},
 	}))

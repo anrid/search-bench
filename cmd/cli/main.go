@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 
+	"github.com/anrid/search-bench/pkg/compare"
 	"github.com/anrid/search-bench/pkg/elastic"
 	"github.com/anrid/search-bench/pkg/item"
 	"github.com/anrid/search-bench/pkg/query"
@@ -31,6 +32,8 @@ func main() {
 	fetchSource := pflag.Bool("fetch-source", false, "fetch item source when querying items (not just item IDs)")
 	createChangeLog := pflag.Bool("create-change-log", false, "create a change log used when running indexing operations during the query benchmark")
 	changeLogFile := pflag.String("change-log-file", "", "write change log data to this file")
+	resultsFile := pflag.String("results-file", "", "write compact query results (the order of primary keys only) to this file")
+	compareResults := pflag.StringSlice("compare-results", []string{}, "Compare the given results files")
 
 	pflag.Parse()
 
@@ -38,7 +41,9 @@ func main() {
 	case "elastic":
 		elastic.SanityTest()
 
-		if *createChangeLog && *dataDir != "" && *changeLogFile != "" {
+		if len(*compareResults) > 0 {
+			compare.CompareResults(*compareResults)
+		} else if *createChangeLog && *dataDir != "" && *changeLogFile != "" {
 			item.CreateChangeLog(item.CreateChangeLogArgs{
 				ChangeLogFile:  *changeLogFile,
 				DataDir:        *dataDir,
@@ -57,7 +62,12 @@ func main() {
 		} else if *queriesFile != "" {
 			queries := query.Load(*queriesFile)
 
-			elastic.RunBenchmark(*benchmarkRuns, queries, *fetchSource)
+			elastic.RunBenchmark(elastic.RunBenchmarkArgs{
+				NumberOfRuns: *benchmarkRuns,
+				Queries:      queries,
+				FetchSource:  *fetchSource,
+				ResultsFile:  *resultsFile,
+			})
 		} else {
 			fmt.Println("Not enough flags given")
 			pflag.PrintDefaults()

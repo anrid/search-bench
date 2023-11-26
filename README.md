@@ -1,5 +1,18 @@
 # Search Bench
 
+## Results at a glance
+
+| Search Engine                | ES 7.16.2 | ES 7.17.15 | ES 8.11.1 | Best vs Worst |
+| ---------------------------- | --------- | ---------- | --------- | ------------- |
+| Index time (1M items)        | 5m 10s    | 4m 48s     | 4m 34s    | -12%          |
+| Avg search time (1k queries) | 21.26s    | 19.04s     | 9.90s     | -54%          |
+
+### Search results comparison (BM25 b=0.75, k1=1.2)
+
+- ES **8.11.1** vs **7.17.15** : `10.04%` of search results differ (`1.53%` of primary keys different on average)
+- ES **8.11.1** vs **7.16.2** : `9.72%` of search results differ (`1.53%` of primary keys different on average)
+- ES **7.17.15** vs **7.16.2** : `3.96%` of search results differ (`0.00%` of primary keys different on average)
+
 ## Data used in all benchmarks
 
 - CSV files containing items from a popular second-hand marketplace
@@ -94,14 +107,14 @@ Index stats (before):
   }
 }
 
-Executed 100 queries - fetched 120 / 2078 (eq) item IDs
-Executed 100 queries - fetched 240 / 2078 (eq) item IDs
-Executed 200 queries - fetched 120 / 1289 (eq) item IDs
-Executed 200 queries - fetched 240 / 1289 (eq) item IDs
+Executed 100 queries - fetched 120 / 1833 (eq) item IDs
+Executed 100 queries - fetched 240 / 1833 (eq) item IDs
+Executed 200 queries - fetched 120 / 1160 (eq) item IDs
+Executed 200 queries - fetched 240 / 1160 (eq) item IDs
 
 ...
 
-Executed 1000 queries x 5 runs. Average time 13.442433577s
+Executed 1000 queries x 5 runs. Average time 19.050047411s
 Index stats (after):
 {
   "_all": {
@@ -138,7 +151,7 @@ Index stats (after):
 
 - Indexed 1,000,000 docs in `4m 49s`
 - Total index size `1,195,189,251 bytes`
-- Executed 1,000 popular queries in `5 runs` at an average time of `13.44s`
+- Executed 1,000 popular queries in `5 runs` at an average time of `19.05s`
   - Both query and request caches disabled
 
 ### Elasticsearch 8.11.1
@@ -213,14 +226,14 @@ Index stats (before):
   }
 }
 
-Executed 100 queries - fetched 120 / 2078 (eq) item IDs
-Executed 100 queries - fetched 240 / 2078 (eq) item IDs
-Executed 200 queries - fetched 120 / 1289 (eq) item IDs
-Executed 200 queries - fetched 240 / 1289 (eq) item IDs
+Executed 100 queries - fetched 120 / 1833 (eq) item IDs
+Executed 100 queries - fetched 240 / 1833 (eq) item IDs
+Executed 200 queries - fetched 120 / 1160 (eq) item IDs
+Executed 200 queries - fetched 240 / 1160 (eq) item IDs
 
 ...
 
-Executed 1000 queries x 5 runs. Average time 9.116981003s
+Executed 1000 queries x 5 runs. Average time 9.903988107s
 Index stats (after):
 {
   "_all": {
@@ -257,7 +270,7 @@ Index stats (after):
 
 - Indexed 1,000,000 docs in `4m 31s`
 - Total index size `1,190,922,960 bytes`
-- Executed 1,000 popular queries in `5 runs` at an average time of `9.12s`
+- Executed 1,000 popular queries in `5 runs` at an average time of `9.90s`
   - Both query and request caches disabled
 
 > [!NOTE]
@@ -277,20 +290,23 @@ Index stats (after):
         {
           "terms": {
             "category_id": [
-              72
+              344
             ]
           }
         }
       ]
     }
   },
-  "size": 120
+  "size": 120,
+  "sort": {
+    "created": "desc"
+  }
 }
 
 // keyword only
 {
   "_source": false,
-  "from": 0,
+  "from": 120,
   "query": {
     "bool": {
       "minimum_should_match": 1,
@@ -298,21 +314,54 @@ Index stats (after):
         {
           "match": {
             "name": {
-              "query": "黒子 の バスケ"
+              "query": "エヴァ   バッジ"
             }
           }
         },
         {
           "match": {
             "desc": {
-              "query": "黒子 の バスケ"
+              "query": "エヴァ   バッジ"
             }
           }
         }
       ]
     }
   },
-  "size": 120
+  "size": 120,
+  "sort": {
+    "_score": "desc"
+  }
+}
+
+// Both status and category_id
+{
+  "_source": false,
+  "from": 120,
+  "query": {
+    "bool": {
+      "filter": [
+        {
+          "terms": {
+            "category_id": [
+              174
+            ]
+          }
+        },
+        {
+          "terms": {
+            "status": [
+              1
+            ]
+          }
+        }
+      ]
+    }
+  },
+  "size": 120,
+  "sort": {
+    "created": "desc"
+  }
 }
 
 // Both keyword and category_id
@@ -325,7 +374,7 @@ Index stats (after):
         {
           "terms": {
             "category_id": [
-              1
+              3
             ]
           }
         }
@@ -349,7 +398,10 @@ Index stats (after):
       ]
     }
   },
-  "size": 120
+  "size": 120,
+  "sort": {
+    "_score": "desc"
+  }
 }
 
 ```
