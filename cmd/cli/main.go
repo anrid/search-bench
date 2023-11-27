@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"os"
 
 	"github.com/anrid/search-bench/pkg/compare"
 	"github.com/anrid/search-bench/pkg/elastic"
@@ -42,7 +43,12 @@ func main() {
 		elastic.SanityTest()
 
 		if len(*compareResults) > 0 {
-			compare.CompareResults(*compareResults)
+			if len(*compareResults) != 2 {
+				fmt.Printf("Can only compare results between 2 files (pass two --compare-results flags)\n")
+				pflag.PrintDefaults()
+				os.Exit(-1)
+			}
+			compare.CompareResults((*compareResults)[0], (*compareResults)[1])
 		} else if *createChangeLog && *dataDir != "" && *changeLogFile != "" {
 			item.CreateChangeLog(item.CreateChangeLogArgs{
 				ChangeLogFile:  *changeLogFile,

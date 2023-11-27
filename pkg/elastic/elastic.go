@@ -203,7 +203,13 @@ func ExecuteQueries(queries []*query.SearchQuery, fetchSource bool, fetchMax int
 					for _, doc := range se.Hits.Hits {
 						ids = append(ids, doc.ID)
 					}
-					_, err = resultsFile.WriteString(fmt.Sprintf("%d|%s\n", qc, strings.Join(ids, ",")))
+
+					isBestmatch := "bm=0"
+					if se.Hits.Hits[0].Score > 0 {
+						isBestmatch = "bm=1"
+					}
+
+					_, err = resultsFile.WriteString(fmt.Sprintf("%d|%s|%s\n", qc, isBestmatch, strings.Join(ids, ",")))
 					if err != nil {
 						log.Panic(err)
 					}

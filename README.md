@@ -9,9 +9,9 @@
 
 ### Search results comparison (BM25 b=0.75, k1=1.2)
 
-- ES **8.11.1** vs **7.17.15** : `10.04%` of search results differ (`1.53%` of primary keys different on average)
-- ES **8.11.1** vs **7.16.2** : `9.72%` of search results differ (`1.53%` of primary keys different on average)
-- ES **7.17.15** vs **7.16.2** : `3.96%` of search results differ (`0.00%` of primary keys different on average)
+- ES **8.11.1** vs **7.17.15** : `16.72%` of search results differ (`1.53%` of primary keys different on average)
+- ES **8.11.1** vs **7.16.2** : `16.18%` of search results differ (`1.53%` of primary keys different on average)
+- ES **7.17.15** vs **7.16.2** : `6.56%` of search results differ (`0.00%` of primary keys different on average)
 
 ## Data used in all benchmarks
 

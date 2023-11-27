@@ -7,6 +7,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/anrid/search-bench/pkg/data"
 )
 
 const (
@@ -78,96 +80,133 @@ func ReadFilesLineByLine(files []string, forEachLine func(lineNumber int, lines 
 	}
 }
 
-func CompareResults(resultsFiles []string) {
-	var identical, different, total int
-	var diffRatio, diffRatioCount float64
+func CompareResults(fileA, fileB string) {
+	stats := struct {
+		SortByDate struct {
+			Identical                int
+			Different                int
+			Total                    int
+			DiffPct                  float64
+			PrimaryKeyDiffRatio      float64
+			PrimaryKeyDiffRatioCount float64
+			PrimaryKeyAvgDiffPct     float64
+		}
+		Bestmatch struct {
+			Identical                int
+			Different                int
+			Total                    int
+			DiffPct                  float64
+			PrimaryKeyDiffRatio      float64
+			PrimaryKeyDiffRatioCount float64
+			PrimaryKeyAvgDiffPct     float64
+		}
+	}{}
 
-	ReadFilesLineByLine(resultsFiles, func(lineNumber int, lines []*Line) error {
-		if len(lines) < 2 {
-			log.Panic("expected to compare lines between at least 2 files")
+	ReadFilesLineByLine([]string{fileA, fileB}, func(lineNumber int, lines []*Line) error {
+		if len(lines) != 2 {
+			log.Panic("expected to compare lines from 2 files")
 		}
 
-		main := lines[0]
-		others := lines[1:]
+		lineA := lines[0]
+		lineB := lines[1]
 
-		parts := strings.SplitN(main.Text, "|", 2)
-		queryNumber := parts[0]
-		mainIDs := strings.SplitN(parts[1], ",", -1)
+		pA := strings.SplitN(lineA.Text, "|", 3)
+		queryNumberA := pA[0]
+		isBestmatchA := false
+		if pA[1] == "bm=1" {
+			isBestmatchA = true
+		}
+		idsA := strings.SplitN(pA[2], ",", -1)
 
-		for _, o := range others {
-			parts = strings.SplitN(o.Text, "|", 2)
-			otherQueryNumber := parts[0]
+		pB := strings.SplitN(lineB.Text, "|", 3)
+		queryNumberB := pB[0]
+		isBestmatchB := false
+		if pB[1] == "bm=1" {
+			isBestmatchB = true
+		}
+		idsB := strings.SplitN(pB[2], ",", -1)
 
-			if queryNumber != otherQueryNumber {
-				log.Panicf(
-					"found query #%s in file %s but query #%s in file %s on the same line",
-					queryNumber, main.FromFile,
-					otherQueryNumber, o.FromFile,
-				)
-			}
+		if queryNumberA != queryNumberB {
+			log.Panicf(
+				"at query #%s in file %s but query #%s in file %s on the same line",
+				queryNumberA, lineA.FromFile,
+				queryNumberB, lineB.FromFile,
+			)
+		}
 
-			otherIDs := strings.SplitN(parts[1], ",", -1)
+		if isBestmatchA != isBestmatchB {
+			log.Panicf(
+				"query #%s in file %s as %s but query #%s in file %s as %s on the same line",
+				queryNumberA, lineA.FromFile, pA[1],
+				queryNumberB, lineB.FromFile, pB[1],
+			)
+		}
 
-			if !Equal(mainIDs, otherIDs) {
-				different++
-
-				onlyA, onlyB, _ := Diff(mainIDs, otherIDs)
-
-				if DebugPrint {
-					if len(onlyA) > 0 {
-						fmt.Printf(
-							"#%-5s %-20s IDs found only in main  : %3d\n",
-							queryNumber, main.FromFile, len(onlyA),
-						)
-					}
-					if len(onlyB) > 0 {
-						fmt.Printf(
-							"#%-5s %-20s IDs found only in other : %3d \n",
-							queryNumber, o.FromFile, len(onlyB),
-						)
-					}
-				}
-
-				if len(onlyA) > 0 && len(onlyB) == len(onlyA) && len(mainIDs) == len(otherIDs) {
-					diffRatio += float64(len(onlyA)) / float64(len(mainIDs))
-					diffRatioCount++
-				}
-
+		if !Equal(idsA, idsB) {
+			if isBestmatchA {
+				stats.Bestmatch.Different++
 			} else {
-				identical++
+				stats.SortByDate.Different++
 			}
-			total++
+
+			onlyA, onlyB, _ := Diff(idsA, idsB)
+
+			if DebugPrint {
+				if len(onlyA) > 0 {
+					fmt.Printf(
+						"#%-5s %-20s IDs found only in A : %3d\n",
+						queryNumberA, lineA.FromFile, len(onlyA),
+					)
+				}
+				if len(onlyB) > 0 {
+					fmt.Printf(
+						"#%-5s %-20s IDs found only in B : %3d \n",
+						queryNumberA, lineB.FromFile, len(onlyB),
+					)
+				}
+			}
+
+			if len(onlyA) > 0 && len(onlyB) == len(onlyA) && len(idsA) == len(idsB) {
+				diff := float64(len(onlyA)) / float64(len(idsA))
+				if isBestmatchA {
+					stats.Bestmatch.PrimaryKeyDiffRatio += diff
+					stats.Bestmatch.PrimaryKeyDiffRatioCount++
+				} else {
+					stats.SortByDate.PrimaryKeyDiffRatio += diff
+					stats.SortByDate.PrimaryKeyDiffRatioCount++
+				}
+			}
+		} else {
+			if isBestmatchA {
+				stats.Bestmatch.Identical++
+			} else {
+				stats.SortByDate.Identical++
+			}
 		}
 
-		// if queryNumber == "100" {
-		// 	return fmt.Errorf("existing early at query number %s", queryNumber)
-		// }
+		if isBestmatchA {
+			stats.Bestmatch.Total++
+		} else {
+			stats.SortByDate.Total++
+		}
 
 		return nil
 	})
 
-	var averageDiffPct float64
-	if diffRatioCount > 0 {
-		averageDiffPct = (diffRatio / diffRatioCount) * 100
+	if stats.Bestmatch.PrimaryKeyDiffRatioCount > 0 {
+		stats.Bestmatch.PrimaryKeyAvgDiffPct = (stats.Bestmatch.PrimaryKeyDiffRatio / stats.Bestmatch.PrimaryKeyDiffRatioCount) * 100
+	}
+	if stats.SortByDate.PrimaryKeyDiffRatioCount > 0 {
+		stats.SortByDate.PrimaryKeyAvgDiffPct = (stats.SortByDate.PrimaryKeyDiffRatio / stats.SortByDate.PrimaryKeyDiffRatioCount) * 100
+	}
+	if stats.Bestmatch.Total > 0 {
+		stats.Bestmatch.DiffPct = (float64(stats.Bestmatch.Different) / float64(stats.Bestmatch.Total)) * 100
+	}
+	if stats.SortByDate.Total > 0 {
+		stats.SortByDate.DiffPct = (float64(stats.SortByDate.Different) / float64(stats.SortByDate.Total)) * 100
 	}
 
-	fmt.Printf(
-		"\n"+
-			"Comparison:\n"+
-			"        -  total results compared : %d\n"+
-			"        -  identical results      : %d\n"+
-			"        -  different results      : %d\n"+
-			"        -  percentage that differ : %0.2f%%\n"+
-			"\n"+
-			"           average diff between results\n"+
-			"           (primary keys that appear in one\n"+
-			"            result but not the other)        : %.02f%%\n",
-		total,
-		identical,
-		different,
-		(float64(different)/float64(total))*100.00,
-		averageDiffPct,
-	)
+	fmt.Printf("Comparison:\n%s\n\n", data.ToPrettyJSON(stats))
 }
 
 func Equal(a, b []string) bool {
