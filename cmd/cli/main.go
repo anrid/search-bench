@@ -35,6 +35,7 @@ func main() {
 	changeLogFile := pflag.String("change-log-file", "", "write change log data to this file")
 	resultsFile := pflag.String("results-file", "", "write compact query results (the order of primary keys only) to this file")
 	compareResults := pflag.StringSlice("compare-results", []string{}, "Compare the given results files")
+	useItemsWithNoDesc := pflag.Bool("items-no-desc", false, "Import items that do not have a description field")
 
 	pflag.Parse()
 
@@ -62,8 +63,9 @@ func main() {
 			elastic.RunIndexer(elastic.RunIndexerArgs{
 				DataDir:        *dataDir,
 				FilenameFilter: *filenameFilter,
-				BatchSize:      *batchSize,
+				UseItemsNoDesc: *useItemsWithNoDesc,
 				Max:            *max,
+				BatchSize:      *batchSize,
 			})
 		} else if *queriesFile != "" {
 			queries := query.Load(*queriesFile)

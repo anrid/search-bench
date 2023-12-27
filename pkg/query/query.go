@@ -58,7 +58,7 @@ func Load(queriesFile string) (qs []*SearchQuery) {
 			trimmed := parts[1][1 : len(parts[1])-1]
 			cats := strings.SplitN(trimmed, ",", -1)
 			for _, cat := range cats {
-				q.CategoryIDs = append(q.CategoryIDs, data.ToInt(cat))
+				q.CategoryIDs = append(q.CategoryIDs, data.ToInt64(cat))
 			}
 		}
 

@@ -24,7 +24,17 @@ const (
 	StatusTrading
 	StatusSold
 	StatusStopped
+	StatusCancel
 	StatusOther
+)
+
+type ItemCondition int
+
+const (
+	ItemConditionLikeNew ItemCondition = iota + 1
+	ItemConditionGood
+	ItemConditionPoor
+	ItemConditionOther
 )
 
 type Item struct {
@@ -34,6 +44,17 @@ type Item struct {
 	Status     Status `json:"status"`
 	Created    int64  `json:"created"`
 	CategoryID int    `json:"category_id"`
+}
+
+type ItemNoDesc struct {
+	ID            string        `json:"id"`
+	Name          string        `json:"name"`
+	Status        Status        `json:"status"`
+	Created       int64         `json:"created"`
+	Updated       int64         `json:"updated"`
+	CategoryID    int           `json:"category_id"`
+	Price         int           `json:"price"`
+	ItemCondition ItemCondition `json:"item_condition"`
 }
 
 type CreateChangeLogArgs struct {
@@ -59,68 +80,75 @@ type ChangeLogEntry struct {
 func CreateChangeLog(a CreateChangeLogArgs) (changeLog []*ChangeLogEntry) {
 	changeLog = make([]*ChangeLogEntry, 0)
 	var updates, inserts int
+
 	itemsToImport := a.StartFrom + a.MaxItems
 	maxUpdates := a.MaxItems / 3
 	maxInserts := (a.MaxItems / 3) * 2
+
+	createChangeLogBatch := func(totalItems int, items []*Item) error {
+		itemNumber := totalItems - len(items)
+
+		for _, i := range items {
+			itemNumber++
+
+			if itemNumber <= a.StartFrom {
+				// Create update event
+				if updates >= maxUpdates {
+					continue
+				}
+
+				// Create random update
+				rnd, err := rand.Int(rand.Reader, big.NewInt(10))
+				if err != nil {
+					log.Panic(err)
+				}
+
+				cl := &ChangeLogEntry{
+					ItemID: i.ID,
+				}
+
+				switch r := rnd.Int64(); {
+				case r >= 0 && r < 3:
+					// 30% chance of update on `created` field
+					cl.Update.Created = time.UnixMilli(i.Created).Add(24 * time.Hour).UnixMilli()
+				case r >= 3:
+					// 70% chance of update on `status` field
+					if i.Status == StatusOnSale || i.Status == StatusTrading {
+						cl.Update.Status = StatusSold
+					}
+				}
+
+				changeLog = append(changeLog, cl)
+				updates++
+			} else {
+				// Create insert event
+				if inserts >= maxInserts {
+					return fmt.Errorf("done after creating a change log with %d updates and %d inserts", updates, inserts)
+				}
+
+				changeLog = append(changeLog, &ChangeLogEntry{
+					ItemID: i.ID,
+					Insert: i,
+				})
+				inserts++
+			}
+		}
+
+		return nil
+	}
+
+	batcher := &ItemsBatch{
+		Size:         a.BatchSize,
+		ForEachBatch: createChangeLogBatch,
+	}
 
 	fmt.Printf("Creating a new change log with max %d updates and %d inserts\n", maxUpdates, maxInserts)
 
 	Import(ImportArgs{
 		DataDir:          a.DataDir,
 		FilenameFilter:   a.FilenameFilter,
-		BatchSize:        a.BatchSize,
+		Batcher:          batcher,
 		MaxItemsToImport: itemsToImport,
-		ForEachBatch: func(totalItems int, items []*Item) error {
-			itemNumber := totalItems - len(items)
-
-			for _, i := range items {
-				itemNumber++
-
-				if itemNumber <= a.StartFrom {
-					// Create update event
-					if updates >= maxUpdates {
-						continue
-					}
-
-					// Create random update
-					rnd, err := rand.Int(rand.Reader, big.NewInt(10))
-					if err != nil {
-						log.Panic(err)
-					}
-
-					cl := &ChangeLogEntry{
-						ItemID: i.ID,
-					}
-
-					switch r := rnd.Int64(); {
-					case r >= 0 && r < 3:
-						// 30% chance of update on `created` field
-						cl.Update.Created = time.UnixMilli(i.Created).Add(24 * time.Hour).UnixMilli()
-					case r >= 3:
-						// 70% chance of update on `status` field
-						if i.Status == StatusOnSale || i.Status == StatusTrading {
-							cl.Update.Status = StatusSold
-						}
-					}
-
-					changeLog = append(changeLog, cl)
-					updates++
-				} else {
-					// Create insert event
-					if inserts >= maxInserts {
-						return fmt.Errorf("done after creating a change log with %d updates and %d inserts", updates, inserts)
-					}
-
-					changeLog = append(changeLog, &ChangeLogEntry{
-						ItemID: i.ID,
-						Insert: i,
-					})
-					inserts++
-				}
-			}
-
-			return nil
-		},
 	})
 
 	// Shuffle change log!
@@ -145,9 +173,8 @@ func CreateChangeLog(a CreateChangeLogArgs) (changeLog []*ChangeLogEntry) {
 type ImportArgs struct {
 	DataDir          string
 	FilenameFilter   string
-	BatchSize        int
 	MaxItemsToImport int
-	ForEachBatch     func(totalItems int, items []*Item) error
+	Batcher          Batcher
 }
 
 func Import(a ImportArgs) {
@@ -156,8 +183,7 @@ func Import(a ImportArgs) {
 		log.Panic(err)
 	}
 
-	var totalItems int
-	var items []*Item
+	var total int
 
 	for _, fi := range dir {
 		if !strings.Contains(fi.Name(), a.FilenameFilter) {
@@ -180,6 +206,8 @@ func Import(a ImportArgs) {
 		cr := csv.NewReader(gr)
 		var lines int
 		var exitEarly bool
+		var headers []string
+
 		for {
 			rec, err := cr.Read()
 			if err != nil {
@@ -191,61 +219,31 @@ func Import(a ImportArgs) {
 
 			lines++
 			if lines == 1 {
-				// fmt.Printf("Headers: %+v\n", rec)
+				fmt.Printf("Headers: %+v\n", rec)
+				headers = rec
 				continue
 			}
 
-			totalItems++
+			total++
 
-			if lines == 2 {
-				preview := rec[1]
-				if len(preview) > 30 {
-					preview = preview[0:30]
-				}
-				fmt.Printf("Preview item: %s %s %s %s\n", rec[0], preview, rec[3], rec[4])
+			err = a.Batcher.Add(rec, headers)
+			if err != nil {
+				log.Panic(err)
 			}
 
-			i := new(Item)
-			i.ID = rec[0]
-			i.Name = rec[1]
-			i.Desc = rec[2]
-			switch rec[3] {
-			case "on_sale":
-				i.Status = StatusOnSale
-			case "trading":
-				i.Status = StatusTrading
-			case "sold_out":
-				i.Status = StatusSold
-			case "stop":
-				i.Status = StatusStopped
-			default:
-				i.Status = StatusOther
-			}
-			i.Created = data.ToUnixTimestamp(rec[4])
-			i.CategoryID = int(data.ToInt(rec[5]))
-
-			items = append(items, i)
-			if len(items) >= a.BatchSize {
-				err = a.ForEachBatch(totalItems, items)
-				if err != nil {
-					break
-				}
-				items = nil
+			if total%10_000 == 0 {
+				fmt.Printf("Processed %d records ..\n", total)
 			}
 
-			if totalItems%10_000 == 0 {
-				fmt.Printf("Processed %d items ..\n", totalItems)
-			}
-
-			if a.MaxItemsToImport > 0 && totalItems >= a.MaxItemsToImport {
+			if a.MaxItemsToImport > 0 && total >= a.MaxItemsToImport {
 				exitEarly = true
 				break
 			}
 		}
 
-		if len(items) > 0 {
-			a.ForEachBatch(totalItems, items)
-			items = nil
+		err = a.Batcher.Flush()
+		if err != nil {
+			log.Panic(err)
 		}
 
 		f.Close()
@@ -254,5 +252,147 @@ func Import(a ImportArgs) {
 		}
 	}
 
-	fmt.Printf("Imported %d items total\n", totalItems)
+	fmt.Printf("Imported %d items total\n", total)
+}
+
+type ItemsBatch struct {
+	Size         int
+	Total        int
+	Items        []*Item
+	ForEachBatch func(totalItems int, items []*Item) error
+}
+
+func (b *ItemsBatch) Add(rec, headers []string) error {
+	isItem := len(rec) == 6 && headers[2] == "description"
+	if !isItem {
+		return fmt.Errorf("does not look like an Item record: %+v", headers)
+	}
+
+	i := new(Item)
+
+	i.ID = rec[0]
+	i.Name = rec[1]
+	i.Desc = rec[2]
+	switch rec[3] {
+	case "on_sale":
+		i.Status = StatusOnSale
+	case "trading":
+		i.Status = StatusTrading
+	case "sold_out":
+		i.Status = StatusSold
+	case "stop":
+		i.Status = StatusStopped
+	default:
+		i.Status = StatusOther
+	}
+	i.Created = data.ToUnixTimestamp(rec[4])
+	i.CategoryID = int(data.ToInt64(rec[5]))
+
+	b.Total++
+
+	if b.Total == 1 {
+		fmt.Printf("Preview item: %v\n", rec)
+	}
+
+	b.Items = append(b.Items, i)
+
+	if len(b.Items) >= b.Size {
+		err := b.ForEachBatch(b.Total, b.Items)
+		if err != nil {
+			return err
+		}
+		b.Items = nil
+	}
+	return nil
+}
+
+func (b *ItemsBatch) Flush() error {
+	if len(b.Items) > 0 {
+		err := b.ForEachBatch(b.Total, b.Items)
+		if err != nil {
+			return err
+		}
+		b.Items = nil
+	}
+	return nil
+}
+
+type ItemsNoDescBatch struct {
+	Size         int
+	Total        int
+	Items        []*ItemNoDesc
+	ForEachBatch func(totalItems int, items []*ItemNoDesc) error
+}
+
+func (b *ItemsNoDescBatch) Add(rec, headers []string) error {
+	isItem := len(rec) == 8 && headers[2] == "status"
+	if !isItem {
+		return fmt.Errorf("does not look like an ItemNoDesc record: %+v", headers)
+	}
+
+	i := new(ItemNoDesc)
+
+	i.ID = rec[0]
+	i.Name = rec[1]
+	switch rec[2] {
+	case "on_sale":
+		i.Status = StatusOnSale
+	case "trading":
+		i.Status = StatusTrading
+	case "sold_out":
+		i.Status = StatusSold
+	case "stop":
+		i.Status = StatusStopped
+	case "cancel":
+		i.Status = StatusCancel
+	default:
+		i.Status = StatusOther
+	}
+	i.Created = data.ToInt64(rec[3])
+	i.Updated = data.ToInt64(rec[4])
+	i.CategoryID = int(data.ToInt64(rec[5]))
+	i.Price = int(data.ToInt64(rec[6]))
+	switch rec[7] {
+	case "1":
+		i.ItemCondition = ItemConditionLikeNew
+	case "2":
+		i.ItemCondition = ItemConditionGood
+	case "3":
+		i.ItemCondition = ItemConditionPoor
+	default:
+		i.ItemCondition = ItemConditionOther
+	}
+
+	b.Total++
+
+	if b.Total <= 10 {
+		fmt.Printf("Preview item: %v\n", rec)
+	}
+
+	b.Items = append(b.Items, i)
+
+	if len(b.Items) >= b.Size {
+		err := b.ForEachBatch(b.Total, b.Items)
+		if err != nil {
+			return err
+		}
+		b.Items = nil
+	}
+	return nil
+}
+
+func (b *ItemsNoDescBatch) Flush() error {
+	if len(b.Items) > 0 {
+		err := b.ForEachBatch(b.Total, b.Items)
+		if err != nil {
+			return err
+		}
+		b.Items = nil
+	}
+	return nil
+}
+
+type Batcher interface {
+	Add(rec, headers []string) error
+	Flush() error
 }

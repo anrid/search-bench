@@ -17,10 +17,11 @@ import (
 )
 
 const (
-	Host                = "http://127.0.0.1:9200"
-	SanityTestIndexName = "test"
-	ItemIndexName       = "items"
-	DebugPrint          = false
+	Host                 = "http://127.0.0.1:9200"
+	SanityTestIndexName  = "test"
+	ItemsIndexName       = "items"
+	ItemsNoDescIndexName = "items_no_desc"
+	DebugPrint           = false
 )
 
 type Map = map[string]interface{}
@@ -28,6 +29,7 @@ type Map = map[string]interface{}
 type RunIndexerArgs struct {
 	DataDir        string
 	FilenameFilter string
+	UseItemsNoDesc bool
 	BatchSize      int
 	Max            int
 }
@@ -35,23 +37,40 @@ type RunIndexerArgs struct {
 func RunIndexer(a RunIndexerArgs) {
 	fmt.Printf("Running indexer: max %d items ..\n", a.Max)
 
-	CreateItemIndex()
+	var batcher item.Batcher
+	if a.UseItemsNoDesc {
+		batcher = &item.ItemsNoDescBatch{
+			Size:         a.BatchSize,
+			ForEachBatch: BulkIndexItemsNoDesc,
+		}
+		CreateItemsNoDescIndex()
+	} else {
+		batcher = &item.ItemsBatch{
+			Size:         a.BatchSize,
+			ForEachBatch: BulkIndexItems,
+		}
+		CreateItemsIndex()
+	}
 
 	start := time.Now()
 
 	item.Import(item.ImportArgs{
 		DataDir:          a.DataDir,
 		FilenameFilter:   a.FilenameFilter,
-		BatchSize:        a.BatchSize,
+		Batcher:          batcher,
 		MaxItemsToImport: a.Max,
-		ForEachBatch:     BulkIndexItems,
 	})
 
-	Refresh(ItemIndexName)
+	var stats *ESIndexStats
+	if a.UseItemsNoDesc {
+		Refresh(ItemsNoDescIndexName)
+		stats = IndexStats(ItemsNoDescIndexName)
+	} else {
+		Refresh(ItemsIndexName)
+		stats = IndexStats(ItemsIndexName)
+	}
 
-	stats := IndexStats(ItemIndexName)
 	fmt.Printf("Index stats (after):\n%s\n", data.ToPrettyJSON(stats))
-
 	fmt.Printf("Finished indexing %d items in %s\n", stats.All.Primaries.Docs.Count, time.Since(start))
 }
 
@@ -68,7 +87,7 @@ type RunBenchmarkArgs struct {
 func RunBenchmark(a RunBenchmarkArgs) {
 	fmt.Printf("Running benchmark: %d queries x %d runs ..\n", len(a.Queries), a.NumberOfRuns)
 
-	statsBefore := IndexStats(ItemIndexName)
+	statsBefore := IndexStats(ItemsIndexName)
 	fmt.Printf("Index stats (before):\n%s\n", data.ToPrettyJSON(statsBefore))
 
 	var resultsFile *os.File
@@ -84,7 +103,15 @@ func RunBenchmark(a RunBenchmarkArgs) {
 
 	for run := 0; run < a.NumberOfRuns; run++ {
 		runStart := time.Now()
-		ExecuteQueries(a.Queries, a.FetchSource, 240, resultsFile)
+
+		ExecuteQueries(ExecuteQueriesArgs{
+			Queries:        a.Queries,
+			FetchSource:    a.FetchSource,
+			FetchMax:       240,
+			PageSize:       120,
+			WriteResultsTo: resultsFile,
+		})
+
 		totalDuration += time.Since(runStart)
 
 		// Store results from first run only!
@@ -99,18 +126,28 @@ func RunBenchmark(a RunBenchmarkArgs) {
 		len(a.Queries), a.NumberOfRuns, totalDuration/time.Duration(a.NumberOfRuns),
 	)
 
-	statsAfter := IndexStats(ItemIndexName)
+	statsAfter := IndexStats(ItemsIndexName)
 	fmt.Printf("Index stats (after):\n%s\n", data.ToPrettyJSON(statsAfter))
 }
 
-func ExecuteQueries(queries []*query.SearchQuery, fetchSource bool, fetchMax int, resultsFile *os.File) {
-	size := 120
+type ExecuteQueriesArgs struct {
+	Queries        []*query.SearchQuery
+	FetchSource    bool
+	FetchMax       int
+	PageSize       int
+	WriteResultsTo *os.File
+}
+
+func ExecuteQueries(a ExecuteQueriesArgs) {
+	if a.PageSize == 0 {
+		a.PageSize = 120
+	}
 	var qc int
 
 	createdSort := Map{"created": "desc"}
 	scoreSort := Map{"_score": "desc"}
 
-	for _, q := range queries {
+	for _, q := range a.Queries {
 		qc++
 
 		var from int64
@@ -145,8 +182,8 @@ func ExecuteQueries(queries []*query.SearchQuery, fetchSource bool, fetchMax int
 				"query": Map{
 					"bool": boolQuery,
 				},
-				"size":    size,
-				"_source": fetchSource,
+				"size":    a.PageSize,
+				"_source": a.FetchSource,
 				"from":    from,
 			}
 			if sort != nil {
@@ -157,7 +194,7 @@ func ExecuteQueries(queries []*query.SearchQuery, fetchSource bool, fetchMax int
 				fmt.Printf("Query:\n%s\n", data.ToPrettyJSON(esQuery))
 			}
 
-			res, code, err := Call(http.MethodPost, Host+"/"+ItemIndexName+"/_search?request_cache=false", data.ToJSON(esQuery))
+			res, code, err := Call(http.MethodPost, Host+"/"+ItemsIndexName+"/_search?request_cache=false", data.ToJSON(esQuery))
 			if err != nil {
 				log.Panic(err)
 			}
@@ -184,7 +221,7 @@ func ExecuteQueries(queries []*query.SearchQuery, fetchSource bool, fetchMax int
 				fmt.Printf("Executed %d queries - fetched %d / %d (%s) item IDs\n", qc, totalDocsFetched, se.Hits.Total.Value, se.Hits.Total.Relation)
 			}
 
-			if fetchSource && se.Hits.Hits != nil {
+			if a.FetchSource && se.Hits.Hits != nil {
 				for i, doc := range se.Hits.Hits {
 					fmt.Printf(
 						"%03d. ID: %s  Name: %s  Status: %d  Category: %d\n", i+1,
@@ -196,9 +233,9 @@ func ExecuteQueries(queries []*query.SearchQuery, fetchSource bool, fetchMax int
 				}
 				// TODO: Store hits in results file, if one is open
 			}
-			if !fetchSource && len(se.Hits.Hits) > 0 && from == 0 /* only first page! */ {
+			if !a.FetchSource && len(se.Hits.Hits) > 0 && from == 0 /* only first page! */ {
 				// Write first page of results to results file, if one is open
-				if resultsFile != nil {
+				if a.WriteResultsTo != nil {
 					var ids []string
 					for _, doc := range se.Hits.Hits {
 						ids = append(ids, doc.ID)
@@ -209,15 +246,15 @@ func ExecuteQueries(queries []*query.SearchQuery, fetchSource bool, fetchMax int
 						isBestmatch = "bm=1"
 					}
 
-					_, err = resultsFile.WriteString(fmt.Sprintf("%d|%s|%s\n", qc, isBestmatch, strings.Join(ids, ",")))
+					_, err = a.WriteResultsTo.WriteString(fmt.Sprintf("%d|%s|%s\n", qc, isBestmatch, strings.Join(ids, ",")))
 					if err != nil {
 						log.Panic(err)
 					}
 				}
 			}
 
-			hasNextPage := se.Hits.Total.Value > 0 && se.Hits.Total.Value > int64(size) && len(se.Hits.Hits) == int(size)
-			if !hasNextPage || totalDocsFetched >= fetchMax {
+			hasNextPage := se.Hits.Total.Value > 0 && se.Hits.Total.Value > int64(a.PageSize) && len(se.Hits.Hits) == int(a.PageSize)
+			if !hasNextPage || totalDocsFetched >= a.FetchMax {
 				break
 			}
 
@@ -256,7 +293,33 @@ func BulkIndexItems(itemsTotal int, items []*item.Item) error {
 
 	var docs []interface{}
 	for _, i := range items {
-		docs = append(docs, Map{"index": Map{"_index": ItemIndexName, "_id": i.ID}})
+		docs = append(docs, Map{"index": Map{"_index": ItemsIndexName, "_id": i.ID}})
+		docs = append(docs, i)
+	}
+
+	bulk := BuildBulkBody(docs...)
+	if len(bulk) > 10_000_000 {
+		fmt.Printf("WARNING: bulk index body is %d bytes large!\n", len(bulk))
+	}
+
+	fmt.Printf("Bulk indexing %d items (JSON payload: %d bytes)\n", len(items), len(bulk))
+	res, code, err := Call(http.MethodPost, Host+"/_bulk", bulk)
+	EnsureNoError(res, code, err)
+
+	return nil
+}
+
+func BulkIndexItemsNoDesc(itemsTotal int, items []*item.ItemNoDesc) error {
+	tok := data.KagomeV2Tokenizer()
+
+	for _, i := range items {
+		name := tok.Wakati(i.Name)
+		i.Name = strings.Join(name, " ")
+	}
+
+	var docs []interface{}
+	for _, i := range items {
+		docs = append(docs, Map{"index": Map{"_index": ItemsNoDescIndexName, "_id": i.ID}})
 		docs = append(docs, i)
 	}
 
@@ -284,8 +347,8 @@ func EnsureNoError(res []byte, statusCode int, err error) {
 	}
 }
 
-func CreateItemIndex() {
-	res, code, err := Call(http.MethodDelete, Host+"/"+ItemIndexName, nil)
+func CreateItemsIndex() {
+	res, code, err := Call(http.MethodDelete, Host+"/"+ItemsIndexName, nil)
 	if err != nil {
 		log.Panic(err)
 	}
@@ -294,7 +357,7 @@ func CreateItemIndex() {
 		fmt.Printf("res: %s (code: %d)\n", res, code)
 	}
 
-	res, code, err = Call(http.MethodPut, Host+"/"+ItemIndexName, data.ToJSON(Map{
+	res, code, err = Call(http.MethodPut, Host+"/"+ItemsIndexName, data.ToJSON(Map{
 		"mappings": Map{
 			"properties": Map{
 				"id":          Map{"type": "keyword"},
@@ -303,6 +366,51 @@ func CreateItemIndex() {
 				"status":      Map{"type": "integer"},
 				"created":     Map{"type": "date", "format": "epoch_millis"},
 				"category_id": Map{"type": "integer"},
+			},
+		},
+		"settings": Map{
+			"number_of_shards": 1,
+			"index": Map{
+				"queries.cache.enabled": "false",
+				"similarity": Map{
+					"default": Map{
+						"type": "BM25",
+						"b":    0.75,
+						"k1":   1.2,
+					},
+				},
+			},
+		},
+	}))
+	if err != nil {
+		log.Panic(err)
+	}
+
+	if DebugPrint {
+		fmt.Printf("res: %s (code: %d)\n", res, code)
+	}
+}
+
+func CreateItemsNoDescIndex() {
+	res, code, err := Call(http.MethodDelete, Host+"/"+ItemsNoDescIndexName, nil)
+	if err != nil {
+		log.Panic(err)
+	}
+
+	if DebugPrint {
+		fmt.Printf("res: %s (code: %d)\n", res, code)
+	}
+
+	res, code, err = Call(http.MethodPut, Host+"/"+ItemsNoDescIndexName, data.ToJSON(Map{
+		"mappings": Map{
+			"properties": Map{
+				"id":             Map{"type": "keyword"},
+				"name":           Map{"type": "text"},
+				"status":         Map{"type": "integer"},
+				"created":        Map{"type": "date", "format": "epoch_millis"},
+				"updated":        Map{"type": "date", "format": "epoch_millis"},
+				"category_id":    Map{"type": "integer"},
+				"item_condition": Map{"type": "integer"},
 			},
 		},
 		"settings": Map{
